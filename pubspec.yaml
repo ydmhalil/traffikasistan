@@ -1,0 +1,47 @@
+name: trafik_asistan
+description: Gerçek zamanlı trafik levhası tanıma ve sesli uyarı uygulaması.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Kamera
+  camera: ^0.12.0
+
+  # ONNX Runtime inference (GPU destekli, async)
+  onnxruntime: ^1.4.1
+
+  # Görüntü işleme (YUV → RGB dönüşümü)
+  image: ^4.8.0
+
+  # Sesli uyarı (TTS)
+  flutter_tts: ^4.2.5
+
+  # Ayarlar kalıcılığı
+  shared_preferences: ^2.5.4
+
+  # Ekranı açık tut (sürüş modu)
+  wakelock_plus: ^1.4.0
+
+  # Titreşim (kritik levhalar)
+  vibration: ^3.1.8
+
+  # İzin yönetimi
+  permission_handler: ^12.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/models/
+    - assets/labels/
