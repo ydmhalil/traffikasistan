@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/tts_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   final double initialConfidence;
   final int initialCooldown;
   final bool initialVoiceEnabled;
   final double initialZoom;
-  final void Function(double confidence, int cooldown, bool voice, double speechRate, double zoom)
+  final TtsService? tts; // TTS servisi (opsiyonel test için)
+  final void Function(double confidence, int cooldown, bool voice, double speechRate, double zoom, double volume)
       onSettingsChanged;
 
   const SettingsScreen({
@@ -16,6 +18,7 @@ class SettingsScreen extends StatefulWidget {
     required this.initialVoiceEnabled,
     required this.initialZoom,
     required this.onSettingsChanged,
+    this.tts,
   });
 
   @override
@@ -27,7 +30,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late int _cooldown;
   late bool _voiceEnabled;
   late double _zoom;
-  double _speechRate = 0.9;
+  double _speechRate = 0.85;
+  double _volume = 1.0;
+  bool _isGoogleTtsAvailable = false;
 
   @override
   void initState() {
@@ -37,14 +42,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _voiceEnabled = widget.initialVoiceEnabled;
     _zoom = widget.initialZoom;
     _loadPrefs();
+    _checkTtsEngine();
   }
 
   Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      _speechRate = prefs.getDouble('speech_rate') ?? 0.9;
+      _speechRate = prefs.getDouble('speech_rate') ?? 0.85;
+      _volume = prefs.getDouble('volume') ?? 1.0;
       _zoom = prefs.getDouble('zoom') ?? widget.initialZoom;
     });
+  }
+
+  Future<void> _checkTtsEngine() async {
+    if (widget.tts == null) return;
+    final available = await widget.tts!.isGoogleTtsAvailable();
+    setState(() => _isGoogleTtsAvailable = available);
   }
 
   Future<void> _saveAndApply() async {
@@ -53,8 +66,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.setInt('cooldown', _cooldown);
     await prefs.setBool('voice_enabled', _voiceEnabled);
     await prefs.setDouble('speech_rate', _speechRate);
+    await prefs.setDouble('volume', _volume);
     await prefs.setDouble('zoom', _zoom);
-    widget.onSettingsChanged(_confidence, _cooldown, _voiceEnabled, _speechRate, _zoom);
+    widget.onSettingsChanged(_confidence, _cooldown, _voiceEnabled, _speechRate, _zoom, _volume);
+  }
+
+  // TTS test butonları
+  void _testTts(String testType) {
+    if (widget.tts == null) return;
+    
+    switch (testType) {
+      case 'critical':
+        widget.tts!.speak('DİKKAT! Dur levhası!', interrupt: true);
+        break;
+      case 'high':
+        widget.tts!.speak('Dikkat, hız limiti 50', interrupt: true);
+        break;
+      case 'normal':
+        widget.tts!.speak('Sağa dön', interrupt: true);
+        break;
+    }
   }
 
   @override
@@ -144,28 +175,63 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           // Sesli Uyarı
           _SettingsCard(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('Sesli Uyarı',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 17,
-                            fontWeight: FontWeight.bold)),
-                    SizedBox(height: 4),
-                    Text('Levhaları sesle bildir',
-                        style:
-                            TextStyle(color: Color(0xFF8A8A9A), fontSize: 13)),
+                    const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Sesli Uyarı',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 17,
+                                fontWeight: FontWeight.bold)),
+                        SizedBox(height: 4),
+                        Text('Levhaları sesle bildir',
+                            style: TextStyle(
+                                color: Color(0xFF8A8A9A), fontSize: 13)),
+                      ],
+                    ),
+                    Switch(
+                      value: _voiceEnabled,
+                      onChanged: (v) => setState(() => _voiceEnabled = v),
+                      activeColor: const Color(0xFF00B4FF),
+                    ),
                   ],
                 ),
-                Switch(
-                  value: _voiceEnabled,
-                  onChanged: (v) => setState(() => _voiceEnabled = v),
-                  activeColor: const Color(0xFF00B4FF),
-                ),
+                
+                // Google TTS durum kartı
+                if (_isGoogleTtsAvailable && _voiceEnabled) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00B4FF).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: const Color(0xFF00B4FF).withOpacity(0.3),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.check_circle, 
+                          color: const Color(0xFF00B4FF), size: 18),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Google TTS aktif',
+                          style: TextStyle(
+                            color: Color(0xFF00B4FF),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -237,6 +303,119 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 Text('Hızlı',
                                     style: TextStyle(
                                         color: Color(0xFF8A8A9A), fontSize: 12)),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Ses Seviyesi
+                      _SettingsCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('Ses Seviyesi',
+                                        style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 17,
+                                            fontWeight: FontWeight.bold)),
+                                    SizedBox(height: 4),
+                                    Text('TTS ses yüksekliği',
+                                        style: TextStyle(
+                                            color: Color(0xFF8A8A9A),
+                                            fontSize: 13)),
+                                  ],
+                                ),
+                                Text(
+                                  '${(_volume * 100).toInt()}%',
+                                  style: const TextStyle(
+                                    color: Color(0xFF00B4FF),
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            SliderTheme(
+                              data: _sliderTheme(context),
+                              child: Slider(
+                                value: _volume,
+                                min: 0.5,
+                                max: 1.0,
+                                divisions: 5,
+                                onChanged: (v) {
+                                  setState(() => _volume = v);
+                                  widget.tts?.setVolume(v);
+                                },
+                              ),
+                            ),
+                            const Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text('50%',
+                                    style: TextStyle(
+                                        color: Color(0xFF8A8A9A), fontSize: 12)),
+                                Text('100%',
+                                    style: TextStyle(
+                                        color: Color(0xFF8A8A9A), fontSize: 12)),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // TTS Test Butonları
+                      _SettingsCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Ses Testi',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 4),
+                            const Text('Farklı öncelik seviyelerini test edin',
+                                style: TextStyle(
+                                    color: Color(0xFF8A8A9A), fontSize: 13)),
+                            const SizedBox(height: 14),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _TestButton(
+                                    label: 'KRİTİK',
+                                    icon: Icons.warning_amber_rounded,
+                                    color: const Color(0xFFFF3B3B),
+                                    onTap: () => _testTts('critical'),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: _TestButton(
+                                    label: 'YÜKSEK',
+                                    icon: Icons.priority_high,
+                                    color: const Color(0xFFFFD600),
+                                    onTap: () => _testTts('high'),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: _TestButton(
+                                    label: 'NORMAL',
+                                    icon: Icons.info_outline,
+                                    color: const Color(0xFF00B4FF),
+                                    onTap: () => _testTts('normal'),
+                                  ),
+                                ),
                               ],
                             ),
                           ],
@@ -438,6 +617,50 @@ class _InfoRow extends StatelessWidget {
                   fontSize: 14,
                   fontWeight: FontWeight.w500)),
         ],
+      ),
+    );
+  }
+}
+
+class _TestButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _TestButton({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withOpacity(0.4)),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 24),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

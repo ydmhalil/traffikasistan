@@ -3,18 +3,24 @@ import '../models/detection_result.dart';
 
 class BoundingBoxOverlay extends StatelessWidget {
   final List<DetectionResult> detections;
-  final Size previewSize;
+  final Size previewSize;  // Kamera preview boyutu (landscape format)
+  final Size screenSize;   // Ekran widget boyutu
 
   const BoundingBoxOverlay({
     super.key,
     required this.detections,
     required this.previewSize,
+    required this.screenSize,
   });
 
   @override
   Widget build(BuildContext context) {
     return CustomPaint(
-      painter: _BoxPainter(detections: detections, previewSize: previewSize),
+      painter: _BoxPainter(
+        detections: detections,
+        previewSize: previewSize,
+        screenSize: screenSize,
+      ),
     );
   }
 }
@@ -22,17 +28,48 @@ class BoundingBoxOverlay extends StatelessWidget {
 class _BoxPainter extends CustomPainter {
   final List<DetectionResult> detections;
   final Size previewSize;
+  final Size screenSize;
 
-  _BoxPainter({required this.detections, required this.previewSize});
+  _BoxPainter({
+    required this.detections,
+    required this.previewSize,
+    required this.screenSize,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
+    // Kamera aspect ratio ve ekran aspect ratio farkını hesapla
+    final previewAspect = previewSize.width / previewSize.height;
+    final screenAspect = screenSize.width / screenSize.height;
+
+    // Scale faktörlerini hesapla (preview -> screen transform)
+    double scaleX, scaleY;
+    double offsetX = 0, offsetY = 0;
+
+    if (previewAspect > screenAspect) {
+      // Preview daha geniş -> yatay crop gerekiyor
+      scaleY = screenSize.height / previewSize.height;
+      scaleX = scaleY;
+      offsetX = (screenSize.width - previewSize.width * scaleX) / 2;
+    } else {
+      // Preview daha dar -> dikey crop gerekiyor
+      scaleX = screenSize.width / previewSize.width;
+      scaleY = scaleX;
+      offsetY = (screenSize.height - previewSize.height * scaleY) / 2;
+    }
+
     for (final det in detections) {
+      // Normalize koordinatları ekran koordinatlarına dönüştür
+      final left = det.boundingBox.left * screenSize.width;
+      final top = det.boundingBox.top * screenSize.height;
+      final right = det.boundingBox.right * screenSize.width;
+      final bottom = det.boundingBox.bottom * screenSize.height;
+
       final rect = Rect.fromLTRB(
-        det.boundingBox.left * size.width,
-        det.boundingBox.top * size.height,
-        det.boundingBox.right * size.width,
-        det.boundingBox.bottom * size.height,
+        left.clamp(0, screenSize.width),
+        top.clamp(0, screenSize.height),
+        right.clamp(0, screenSize.width),
+        bottom.clamp(0, screenSize.height),
       );
 
       // Bounding box çizgisi
@@ -132,5 +169,8 @@ class _BoxPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_BoxPainter old) => old.detections != detections;
+  bool shouldRepaint(_BoxPainter old) => 
+      old.detections != detections || 
+      old.previewSize != previewSize ||
+      old.screenSize != screenSize;
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/detector_service.dart';
+import '../utils/sign_labels.dart';
 
 enum SignPriority { critical, high, medium, low }
 
@@ -45,4 +46,6 @@ class DetectionResult {
       case null:            return '';
     }
   }
+
+  String get icon => SignLabels.getIcon(classId);
 }
