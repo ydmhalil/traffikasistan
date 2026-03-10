@@ -88,8 +88,11 @@ class _CameraScreenState extends State<CameraScreen>
   void _onFrame(CameraImage image) async {
     if (!widget.detector.isInitialized) return;
 
-    final detections = await widget.detector.detect(image);
+    final rawDetections = await widget.detector.detect(image);
     if (!mounted) return;
+
+    // Alakalı tabelaları filtrele (merkez odaklı)
+    final filteredDetections = _alertManager.filterRelevantSigns(rawDetections);
 
     // FPS hesapla (her 500ms'de güncelle)
     _fpsFrameCount++;
@@ -101,18 +104,18 @@ class _CameraScreenState extends State<CameraScreen>
       _fpsLastTime = now;
       setState(() {
         _fps = newFps;
-        _detections = detections;
-        _activeZones = detections.map((d) => d.scanZone).whereType<ScanZone>().toSet();
+        _detections = filteredDetections;
+        _activeZones = filteredDetections.map((d) => d.scanZone).whereType<ScanZone>().toSet();
       });
     } else {
       setState(() {
-        _detections = detections;
-        _activeZones = detections.map((d) => d.scanZone).whereType<ScanZone>().toSet();
+        _detections = filteredDetections;
+        _activeZones = filteredDetections.map((d) => d.scanZone).whereType<ScanZone>().toSet();
       });
     }
 
-    if (detections.isNotEmpty) {
-      final best = _alertManager.pickHighestPriority(detections);
+    if (filteredDetections.isNotEmpty) {
+      final best = _alertManager.pickHighestPriority(filteredDetections);
       if (best != null) {
         await _alertManager.handle(best);
         if (best.isCritical) _triggerCriticalAlert(best);
@@ -149,11 +152,13 @@ class _CameraScreenState extends State<CameraScreen>
           initialCooldown: _alertManager.cooldownSeconds,
           initialVoiceEnabled: _alertManager.voiceEnabled,
           initialZoom: _currentZoom,
-          onSettingsChanged: (conf, cooldown, voice, speechRate, zoom) {
+          tts: widget.tts,
+          onSettingsChanged: (conf, cooldown, voice, speechRate, zoom, volume) {
             widget.detector.confidenceThreshold = conf;
             _alertManager.cooldownSeconds = cooldown;
             _alertManager.voiceEnabled = voice;
             widget.tts.setSpeechRate(speechRate);
+            widget.tts.setVolume(volume);
             _setZoom(zoom);
           },
         ),
@@ -203,14 +208,19 @@ class _CameraScreenState extends State<CameraScreen>
 
           // 3. Bounding box overlay
           if (_isInitialized)
-            BoundingBoxOverlay(
-              detections: _detections,
-              previewSize: _cameraController != null
-                  ? Size(
-                      _cameraController!.value.previewSize!.height,
-                      _cameraController!.value.previewSize!.width,
-                    )
-                  : Size.zero,
+            LayoutBuilder(
+              builder: (context, constraints) {
+                return BoundingBoxOverlay(
+                  detections: _detections,
+                  previewSize: _cameraController != null
+                      ? Size(
+                          _cameraController!.value.previewSize!.height,
+                          _cameraController!.value.previewSize!.width,
+                        )
+                      : Size.zero,
+                  screenSize: Size(constraints.maxWidth, constraints.maxHeight),
+                );
+              },
             ),
 
           // 4. Kritik flash border
@@ -548,79 +558,102 @@ class _BottomBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isActive = detections.isNotEmpty;
-    final best = isActive ? detections.first : null;
+    
+    // Tespit edilen levhaları öncelik sırasına göre sırala
+    final sortedDetections = List<DetectionResult>.from(detections)
+      ..sort((a, b) {
+        final priorityDiff = a.priority.index.compareTo(b.priority.index);
+        if (priorityDiff != 0) return priorityDiff;
+        return b.confidence.compareTo(a.confidence);
+      });
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: const Color(0xFF1A1A2E).withOpacity(0.95),
         border: const Border(top: BorderSide(color: Color(0x3300B4FF))),
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // Durum noktası
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 300),
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: isActive ? const Color(0xFF00B4FF) : const Color(0xFFFFD600),
-              boxShadow: [
-                BoxShadow(
-                  color: (isActive ? const Color(0xFF00B4FF) : const Color(0xFFFFD600))
-                      .withOpacity(0.6),
-                  blurRadius: 6,
-                  spreadRadius: 2,
+          // Üst satır: durum + ikonlar + ayarlar
+          Row(
+            children: [
+              // Durum göstergesi
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: isActive ? const Color(0xFF00B4FF) : const Color(0xFFFFD600),
+                  boxShadow: [
+                    BoxShadow(
+                      color: (isActive ? const Color(0xFF00B4FF) : const Color(0xFFFFD600))
+                          .withOpacity(0.6),
+                      blurRadius: 6,
+                      spreadRadius: 2,
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            isActive ? 'AKTİF' : 'TARANIYOR...',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 1.0,
-            ),
+              ),
+              const SizedBox(width: 8),
+              
+              Text(
+                isActive ? 'AKTİF' : 'TARANIYOR',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.8,
+                ),
+              ),
+              
+              const SizedBox(width: 12),
+
+              // Tespit edilen levha ikonları
+              Expanded(
+                child: isActive
+                    ? SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: sortedDetections.map((det) {
+                            return _SignIconChip(detection: det);
+                          }).toList(),
+                        ),
+                      )
+                    : const Center(
+                        child: Text(
+                          '—',
+                          style: TextStyle(color: Colors.white30, fontSize: 18),
+                        ),
+                      ),
+              ),
+
+              const SizedBox(width: 8),
+
+              // Ayarlar butonu
+              GestureDetector(
+                onTap: onSettingsTap,
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: const Color(0xFF00B4FF).withOpacity(0.15),
+                    border: Border.all(color: const Color(0xFF00B4FF).withOpacity(0.3)),
+                  ),
+                  child: const Icon(Icons.settings_outlined, color: Color(0xFF00B4FF), size: 20),
+                ),
+              ),
+            ],
           ),
 
-          // Son tespit + zone
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (best != null) ...[
-                  Text(
-                    best.ttsText.toUpperCase(),
-                    style: TextStyle(
-                      color: best.borderColor,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                  ),
-                  Text(
-                    best.zoneLabel,
-                    style: const TextStyle(
-                      color: Color(0xFF8A8A9A),
-                      fontSize: 11,
-                    ),
-                  ),
-                ] else
-                  const Text('—', style: TextStyle(color: Colors.white54, fontSize: 18)),
-              ],
-            ),
-          ),
+          const SizedBox(height: 6),
 
-          // FPS + Zoom göstergesi
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.end,
+          // Alt satır: FPS + Zoom
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Row(
                 mainAxisSize: MainAxisSize.min,
@@ -633,36 +666,72 @@ class _BottomBar extends StatelessWidget {
                           : fps >= 4
                               ? const Color(0xFFFFD600)
                               : const Color(0xFFFF3B3B),
-                      fontSize: 13,
+                      fontSize: 12,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const Text(
                     'FPS',
-                    style: TextStyle(color: Color(0xFF8A8A9A), fontSize: 10),
+                    style: TextStyle(color: Color(0xFF8A8A9A), fontSize: 9),
                   ),
                 ],
               ),
+              const SizedBox(width: 12),
               Text(
                 '${zoomLevel.toStringAsFixed(1)}x',
                 style: const TextStyle(color: Color(0xFF8A8A9A), fontSize: 11),
               ),
             ],
           ),
-          const SizedBox(width: 10),
+        ],
+      ),
+    );
+  }
+}
 
-          // Ayarlar
-          GestureDetector(
-            onTap: onSettingsTap,
-            child: Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFF00B4FF).withOpacity(0.15),
-                border: Border.all(color: const Color(0xFF00B4FF).withOpacity(0.3)),
+// ─── Levha ikon chip ───────────────────────────────────────────────────────
+class _SignIconChip extends StatelessWidget {
+  final DetectionResult detection;
+  const _SignIconChip({required this.detection});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(right: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: detection.borderColor.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: detection.borderColor.withOpacity(0.5),
+          width: 1.5,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // İkon
+          Text(
+            detection.icon,
+            style: const TextStyle(fontSize: 18),
+          ),
+          const SizedBox(width: 4),
+          
+          // Zone badge
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            decoration: BoxDecoration(
+              color: detection.borderColor.withOpacity(0.3),
+              borderRadius: BorderRadius.circular(3),
+            ),
+            child: Text(
+              detection.zoneLabel,
+              style: TextStyle(
+                color: detection.borderColor,
+                fontSize: 8,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.5,
               ),
-              child: const Icon(Icons.settings_outlined, color: Color(0xFF00B4FF), size: 22),
             ),
           ),
         ],
